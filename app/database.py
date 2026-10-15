@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from pathlib import Path
 from uuid import uuid4
 
 from bson import ObjectId
@@ -7,9 +6,9 @@ from bson.errors import InvalidId
 from pymongo import ASCENDING, MongoClient
 from pymongo.errors import DuplicateKeyError
 
-from app.config import MONGODB_DATABASE, MONGODB_URL
+from app.config import MONGODB_DATABASE, MONGODB_URL, UPLOADS_DIR
 
-UPLOADS_PATH = Path(__file__).resolve().parent.parent / "uploads"
+UPLOADS_PATH = UPLOADS_DIR
 
 _client: MongoClient | None = None
 
@@ -53,7 +52,8 @@ materia_documents_collection = db["materia_documents"]
 
 
 def initialize_database() -> None:
-    UPLOADS_PATH.mkdir(parents=True, exist_ok=True)
+    # No crea UPLOADS_PATH: en Vercel el bundle es de solo lectura y fallaría al importar.
+    # Las rutas de subida crean la carpeta al escribir el primer archivo.
     users_collection.create_index("email", unique=True)
     materia_documents_collection.create_index(
         [("user_id", ASCENDING), ("materia", ASCENDING), ("document_id", ASCENDING)],
