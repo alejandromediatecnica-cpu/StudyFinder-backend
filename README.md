@@ -79,6 +79,7 @@ cp .env.example .env             # macOS / Linux
 | `MONGODB_URL` | Cadena de conexión a MongoDB (Atlas `mongodb+srv://...` o local). **Secreto**: incluye usuario y contraseña. | `mongodb://localhost:27017` |
 | `MONGODB_DATABASE` | Nombre de la base de datos dentro del servidor. | `studyfinder` |
 | `CORS_ORIGINS` | URLs del frontend autorizadas a llamar a la API desde el navegador, separadas por comas y sin barra final. En producción, el dominio real del frontend. | `http://localhost:4200,http://127.0.0.1:4200` |
+| `UPLOADS_DIR` | Carpeta de los archivos subidos. En Vercel debe ser `/tmp/uploads` (el código es de solo lectura). | `uploads/` en la raíz del backend |
 
 Cada variable está documentada también en `.env.example`.
 
@@ -127,6 +128,33 @@ uv lock --upgrade-package <paquete>   # actualizar un paquete concreto
 > Si un entorno necesita un `requirements.txt` (por ejemplo, un hosting que solo usa `pip`),
 > genéralo desde el lock en vez de mantenerlo a mano:
 > `uv export --no-dev --no-hashes -o requirements.txt`.
+
+---
+
+## Despliegue en Vercel
+
+Vercel detecta FastAPI automáticamente en `app/main.py` (variable `app`) e instala las
+dependencias desde `pyproject.toml` + `uv.lock`. No hace falta `vercel.json`.
+
+1. **Rama**: en *Settings → Git → Production Branch*, comprueba qué rama se despliega.
+   Debe contener `pyproject.toml` y `.python-version`; si no, Vercel usa Python 3.12 por defecto.
+2. **Variables de entorno** (*Settings → Environment Variables*):
+
+   | Variable | Valor en Vercel |
+   | --- | --- |
+   | `MONGODB_URL` | Cadena de Atlas (`mongodb+srv://...`) |
+   | `MONGODB_DATABASE` | `studyfinder` |
+   | `CORS_ORIGINS` | URL del frontend desplegado, p. ej. `https://studyfinder-front.vercel.app` |
+   | `UPLOADS_DIR` | `/tmp/uploads` |
+
+3. **Atlas**: en *Network Access* permite `0.0.0.0/0`, porque las funciones de Vercel no tienen
+   IP fija.
+4. Vuelve a desplegar (*Redeploy*) tras cambiar variables.
+
+> **Limitación conocida**: en Vercel `/tmp` es efímero y no se comparte entre instancias.
+> Los documentos y adjuntos subidos pueden desaparecer o dar 404 al descargarlos desde otra
+> instancia. Para producción hay que mover los archivos a un almacenamiento persistente
+> (MongoDB GridFS o Vercel Blob).
 
 ---
 
