@@ -12,6 +12,7 @@ from app.api.users import router as users_router
 from app.api.contacts import router as contacts_router
 from app.api.messages import router as messages_router
 from app.api.messages_files import router as messages_files_router
+from app.config import CORS_ORIGINS
 from app.database import initialize_database
 
 app = FastAPI(title="StudyFinder API", version="1.0.0")
@@ -24,7 +25,7 @@ def startup() -> None:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:4200", "http://127.0.0.1:4200"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

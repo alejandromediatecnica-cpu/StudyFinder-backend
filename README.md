@@ -12,7 +12,7 @@ este backend encendido para funcionar.
 ## Requisitos previos
 
 | Herramienta | Versión | Para qué sirve | Comprobar |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **uv** | 0.13 o superior | Gestiona Python, el entorno virtual y las dependencias | `uv --version` |
 | **MongoDB** | Atlas o local | Base de datos | — |
 | **Git** | Cualquiera reciente | Descargar el proyecto | `git --version` |
@@ -75,11 +75,16 @@ cp .env.example .env             # macOS / Linux
 ```
 
 | Variable | Descripción | Valor por defecto |
-|---|---|---|
-| `MONGODB_URL` | Cadena de conexión a MongoDB | `mongodb://localhost:27017` |
-| `MONGODB_DATABASE` | Nombre de la base de datos | `studyfinder` |
+| --- | --- | --- |
+| `MONGODB_URL` | Cadena de conexión a MongoDB (Atlas `mongodb+srv://...` o local). **Secreto**: incluye usuario y contraseña. | `mongodb://localhost:27017` |
+| `MONGODB_DATABASE` | Nombre de la base de datos dentro del servidor. | `studyfinder` |
+| `CORS_ORIGINS` | URLs del frontend autorizadas a llamar a la API desde el navegador, separadas por comas y sin barra final. En producción, el dominio real del frontend. | `http://localhost:4200,http://127.0.0.1:4200` |
+
+Cada variable está documentada también en `.env.example`.
 
 > `.env` está en `.gitignore`: **nunca** subas credenciales al repositorio.
+> El puerto del servidor **no** se lee de `.env`: se indica con `--port` al arrancar uvicorn
+> (en un hosting que define `PORT`, usa `--port $PORT`).
 
 ### 3. Arrancar el servidor
 
@@ -119,9 +124,9 @@ uv remove <paquete>
 uv lock --upgrade-package <paquete>   # actualizar un paquete concreto
 ```
 
-> `requirements.txt` y `requirements-dev.txt` se mantienen temporalmente para los entornos
-> que todavía instalan con `pip`. Se eliminarán cuando la migración a `uv` termine.
-> Fuente de verdad: `pyproject.toml` + `uv.lock`.
+> Si un entorno necesita un `requirements.txt` (por ejemplo, un hosting que solo usa `pip`),
+> genéralo desde el lock en vez de mantenerlo a mano:
+> `uv export --no-dev --no-hashes -o requirements.txt`.
 
 ---
 
@@ -139,11 +144,11 @@ Es idempotente: los correos ya registrados en MongoDB se saltan.
 
 ## Estructura
 
-```
+```text
 StudyFinder-backend/
 ├── app/
 │   ├── main.py            # Punto de entrada FastAPI, CORS y routers
-│   ├── config.py          # Lectura de variables de entorno
+│   ├── config.py          # Lectura de variables de entorno (.env)
 │   ├── database.py        # Conexión a MongoDB, índices y acceso a datos
 │   ├── deps.py            # Dependencia de autenticación (Bearer token)
 │   ├── api/               # Rutas: auth, users, contacts, documents, messages, search
@@ -169,7 +174,8 @@ MongoDB solo guarda sus metadatos.
 **Error al conectar con MongoDB al arrancar** — revisa que `.env` exista, que `MONGODB_URL`
 sea correcta y que tu IP esté permitida en *Network Access* de Atlas.
 
-**El frontend no puede llamar a la API (error CORS)** — el backend solo acepta peticiones
-desde `http://localhost:4200` y `http://127.0.0.1:4200`. Arranca el frontend en ese puerto.
+**El frontend no puede llamar a la API (error CORS)** — añade la URL exacta del frontend a
+`CORS_ORIGINS` en `.env` (por defecto solo `http://localhost:4200` y `http://127.0.0.1:4200`)
+y reinicia el backend.
 
 **PowerShell bloquea scripts** — ejecuta `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
