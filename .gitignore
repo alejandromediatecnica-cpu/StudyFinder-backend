@@ -3,4 +3,4 @@ __pycache__/
 *.pyc
 .env
 *.db
-uploads/
+uploads/.pytest_cache/
