@@ -1,10 +1,10 @@
 """Migra los datos de studyfinder.db (SQLite) a MongoDB Atlas.
 
-Ejecutar desde backend/ (para que el paquete app. resuelva):
+Ejecutar desde la raíz del repositorio (para que el paquete app. resuelva):
 
-    python -m scripts.migrate_sqlite_to_mongo
+    uv run python -m scripts.migrate_sqlite_to_mongo
 
-La conexión se toma de MONGODB_URL / MONGODB_DATABASE en backend/.env.
+La conexión se toma de MONGODB_URL / MONGODB_DATABASE en .env.
 El script es idempotente: los correos ya registrados en Mongo se saltan.
 """
 
