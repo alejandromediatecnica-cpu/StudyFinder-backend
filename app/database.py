@@ -1,14 +1,19 @@
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from bson import ObjectId
 from bson.errors import InvalidId
 from pymongo import ASCENDING, MongoClient
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from app.config import MONGODB_DATABASE, MONGODB_URL, UPLOADS_DIR
 
+logger = logging.getLogger(__name__)
+
 UPLOADS_PATH = UPLOADS_DIR
+# PyMongo espera 30 s por defecto antes de rendirse; en serverless eso agota la función.
+SERVER_SELECTION_TIMEOUT_MS = 10_000
 
 _client: MongoClient | None = None
 
@@ -35,7 +40,7 @@ def id_query(valor):
 def get_client() -> MongoClient:
     global _client
     if _client is None:
-        _client = MongoClient(MONGODB_URL)
+        _client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=SERVER_SELECTION_TIMEOUT_MS)
     return _client
 
 
@@ -54,11 +59,22 @@ materia_documents_collection = db["materia_documents"]
 def initialize_database() -> None:
     # No crea UPLOADS_PATH: en Vercel el bundle es de solo lectura y fallaría al importar.
     # Las rutas de subida crean la carpeta al escribir el primer archivo.
-    users_collection.create_index("email", unique=True)
-    materia_documents_collection.create_index(
-        [("user_id", ASCENDING), ("materia", ASCENDING), ("document_id", ASCENDING)],
-        unique=True,
-    )
+    # Si MongoDB no responde, la app arranca igualmente (las rutas con datos devolverán 503)
+    # en vez de tumbar todo el proceso al importar.
+    try:
+        users_collection.create_index("email", unique=True)
+        materia_documents_collection.create_index(
+            [("user_id", ASCENDING), ("materia", ASCENDING), ("document_id", ASCENDING)],
+            unique=True,
+        )
+    except PyMongoError as error:
+        logger.error(
+            "No se pudo inicializar MongoDB (base %r): %s: %s. "
+            "Revisa MONGODB_URL y que Atlas > Network Access permita la conexión.",
+            MONGODB_DATABASE,
+            type(error).__name__,
+            error,
+        )
 
 
 initialize_database()
