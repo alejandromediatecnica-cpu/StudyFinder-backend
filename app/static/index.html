@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>StudyFinder</title>
+
+    <style>
+
+        body{
+            font-family: Arial, sans-serif;
+            width:900px;
+            margin:auto;
+            margin-top:50px;
+        }
+
+        input{
+
+            width:80%;
+            padding:12px;
+            font-size:18px;
+
+        }
+
+        button{
+
+            padding:12px;
+            font-size:18px;
+            cursor:pointer;
+
+        }
+
+        .card{
+
+            border:1px solid lightgray;
+            border-radius:10px;
+            padding:15px;
+            margin-top:20px;
+
+        }
+
+    </style>
+
+</head>
+<body>
+
+<h1>StudyFinder</h1>
+
+<input
+id="query"
+placeholder="Buscar documentos..."
+>
+
+<button onclick="buscar()">
+
+Buscar
+
+</button>
+
+<div id="resultados"></div>
+
+<script>
+
+async function buscar(){
+
+    const query=document.getElementById("query").value;
+
+    const response=await fetch(
+
+        `http://127.0.0.1:8000/search?q=${query}`
+
+    );
+
+    const data=await response.json();
+
+    const contenedor=document.getElementById("resultados");
+
+    contenedor.innerHTML="";
+
+    data.forEach(doc=>{
+
+        contenedor.innerHTML+=`
+
+        <div class="card">
+
+            <h2>${doc.title}</h2>
+
+            <p><b>Año:</b> ${doc.year}</p>
+
+            <p><b>Autores:</b> ${doc.authors.join(", ")}</p>
+
+            <a href="${doc.url}" target="_blank">
+
+            Ver documento
+
+            </a>
+
+        </div>
+
+        `;
+
+    });
+
+}
+
+</script>
+
+</body>
+</html>
