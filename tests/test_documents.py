@@ -13,7 +13,7 @@ def subir_pdf(client, headers, nombre="tarea.pdf", contenido=PDF_BYTES, tipo="ap
     )
 
 
-def registrar_usuario(client, email, nombre="Bruno", password="secreta2"):
+def registrar_usuario(client, email, nombre="Bruno", password="ClaveSegura2026x"):
     respuesta = client.post("/auth/signup", json={"name": nombre, "email": email, "password": password})
     assert respuesta.status_code == 201
     return {
@@ -56,13 +56,17 @@ class TestUpload:
         assert respuesta.json()["detail"] == "El archivo está vacío."
 
     def test_archivo_mayor_a_25_mb(self, client, user):
-        grande = b"x" * (25 * 1024 * 1024 + 1)
+        grande = PDF_BYTES + b"x" * (25 * 1024 * 1024)
         respuesta = subir_pdf(client, user["headers"], contenido=grande)
         assert respuesta.status_code == 413
 
+    def test_contenido_no_coincide_con_la_extension(self, client, user):
+        respuesta = subir_pdf(client, user["headers"], contenido=b"x" * 100)
+        assert respuesta.status_code == 400
+        assert "no coincide" in respuesta.json()["detail"]
+
     def test_supera_la_cuota_de_3_mb_del_usuario(self, client, user):
-        casi_lleno = b"x" * (3 * 1024 * 1024 - 1)
-        subir_pdf(client, user["headers"], contenido=casi_lleno)
+        subir_pdf(client, user["headers"], contenido=PDF_BYTES + b"x" * (3 * 1024 * 1024 - len(PDF_BYTES)))
 
         respuesta = subir_pdf(client, user["headers"], nombre="otros.pdf")
         assert respuesta.status_code == 413
@@ -91,6 +95,21 @@ class TestUpload:
     def test_extension_en_mayusculas_se_normaliza(self, client, user):
         respuesta = subir_pdf(client, user["headers"], nombre="TAREA.PDF")
         assert respuesta.status_code == 201
+
+    def test_almacenamiento_informa_uso(self, client, user):
+        subir_pdf(client, user["headers"])
+        respuesta = client.get("/documents/storage", headers=user["headers"])
+        assert respuesta.status_code == 200
+        cuerpo = respuesta.json()
+        assert cuerpo["used"] == len(PDF_BYTES)
+        assert cuerpo["limit"] == 3 * 1024 * 1024
+        assert cuerpo["available"] == 3 * 1024 * 1024 - len(PDF_BYTES)
+        assert cuerpo["documentCount"] == 1
+
+    def test_almacenamiento_liberado_al_eliminar(self, client, user):
+        documento = subir_pdf(client, user["headers"]).json()
+        client.delete(f"/documents/{documento['id']}", headers=user["headers"])
+        assert client.get("/documents/storage", headers=user["headers"]).json()["used"] == 0
 
 
 class TestList:

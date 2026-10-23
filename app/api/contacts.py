@@ -4,6 +4,7 @@ from bson import ObjectId
 
 from app.database import contacts_collection, id_query, users_collection
 from app.deps import get_current_user
+from app.realtime import notify
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
@@ -44,6 +45,7 @@ def send_request(payload: dict, current_user: dict = Depends(get_current_user)):
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
         })
+    notify([yo_id, otro_id], "contacts", "updated", {"estado": "pendiente"})
     return {"ok": True}
 
 
@@ -91,6 +93,7 @@ def accept_request(req_id: str, current_user: dict = Depends(get_current_user)):
     if it.get("receptor_id") != str(current_user["_id"]):
         raise HTTPException(status_code=403, detail="No autorizado")
     contacts_collection.update_one({"_id": rid}, {"$set": {"estado": "aceptado", "updated_at": datetime.utcnow()}})
+    notify([it.get("a_id"), it.get("b_id")], "contacts", "updated", {"estado": "aceptado"})
     return {"ok": True}
 
 
@@ -106,6 +109,7 @@ def reject_request(req_id: str, current_user: dict = Depends(get_current_user)):
     if it.get("receptor_id") != str(current_user["_id"]):
         raise HTTPException(status_code=403, detail="No autorizado")
     contacts_collection.update_one({"_id": rid}, {"$set": {"estado": "rechazado", "updated_at": datetime.utcnow()}})
+    notify([it.get("a_id"), it.get("b_id")], "contacts", "updated", {"estado": "rechazado"})
     return {"ok": True}
 
 

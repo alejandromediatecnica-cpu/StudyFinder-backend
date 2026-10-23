@@ -1,6 +1,5 @@
-import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +8,8 @@ from bson import ObjectId
 
 from app.database import contacts_collection, id_query, messages_collection, users_collection, UPLOADS_PATH
 from app.deps import get_current_user
+from app.files import message_content_is_valid
+from app.realtime import notify
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
@@ -81,21 +82,31 @@ async def send_message(otro_id: str, texto: str = Form(""), archivo: UploadFile 
         "archivo": None,
         "nombre_archivo": None,
         "tamano_archivo": None,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
         "leido": False,
     }
     if archivo:
-        content = await archivo.read()
+        content = await archivo.read(MAX_FILE_SIZE + 1)
+        await archivo.close()
+        if not content:
+            raise HTTPException(status_code=400, detail="El archivo está vacío")
         if len(content) > MAX_FILE_SIZE:
             raise HTTPException(status_code=413, detail="El archivo no debe superar 3 MB")
         ext = Path(archivo.filename or "").suffix.lower()
-        nombre = f"{secrets.token_urlsafe(12)}{ext}" if ext else secrets.token_urlsafe(12)
+        if not message_content_is_valid(ext, content):
+            raise HTTPException(
+                status_code=400,
+                detail="Solo puedes adjuntar documentos PDF, Office o imágenes válidas.",
+            )
+        nombre = f"{secrets.token_urlsafe(12)}{ext}"
         d = _user_dir(yo_id)
         p = d / nombre
         p.write_bytes(content)
         payload["archivo"] = f"{yo_id}/{nombre}"
         payload["nombre_archivo"] = archivo.filename or nombre
         payload["tamano_archivo"] = len(content)
-    messages_collection.insert_one(payload)
-    payload["id"] = str(payload.pop("_id", ""))
+    result = messages_collection.insert_one(payload)
+    payload["id"] = str(result.inserted_id)
+    payload.pop("_id", None)
+    notify([yo_id, otro_id], "messages", "created", payload)
     return payload

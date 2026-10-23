@@ -4,7 +4,7 @@ from app.api import messages as messages_api
 def registrar(client, email, nombre="Bruno"):
     respuesta = client.post(
         "/auth/signup",
-        json={"name": nombre, "email": email, "password": "secreta2"},
+        json={"name": nombre, "email": email, "password": "ClaveSegura2026x"},
     )
     assert respuesta.status_code == 201
     datos = respuesta.json()
@@ -32,10 +32,63 @@ class TestPerfil:
         cuerpo = respuesta.json()
         assert cuerpo["email"] == user["email"]
         assert cuerpo["name"] == "Ana"
+        assert cuerpo["language"] == "es"
+        assert cuerpo["hasAvatar"] is False
         assert "codigo" not in cuerpo
+
+    def test_actualizar_perfil(self, client, user):
+        respuesta = client.patch(
+            "/users/me",
+            json={"name": "Ana Maria", "language": "en"},
+            headers=user["headers"],
+        )
+        assert respuesta.status_code == 200
+        cuerpo = respuesta.json()
+        assert cuerpo["name"] == "Ana Maria"
+        assert cuerpo["language"] == "en"
+
+    def test_no_permite_nombre_de_otro_usuario(self, client, user):
+        registrar(client, "bruno@correo.com", nombre="Bruno")
+        respuesta = client.patch(
+            "/users/me", json={"name": "bruno"}, headers=user["headers"]
+        )
+        assert respuesta.status_code == 409
 
     def test_me_sin_token(self, client):
         assert client.get("/users/me").status_code == 401
+
+    def test_sube_y_descarga_avatar(self, client, user):
+        png = b"\x89PNG\r\n\x1a\n" + b"contenido"
+        respuesta = client.put(
+            "/users/me/avatar",
+            files={"file": ("foto.png", png, "image/png")},
+            headers=user["headers"],
+        )
+        assert respuesta.status_code == 200
+        assert client.get("/users/me", headers=user["headers"]).json()["hasAvatar"] is True
+        descarga = client.get(
+            f"/users/{user['user']['id']}/avatar", headers=user["headers"]
+        )
+        assert descarga.status_code == 200
+        assert descarga.content == png
+
+    def test_rechaza_avatar_que_no_es_imagen(self, client, user):
+        respuesta = client.put(
+            "/users/me/avatar",
+            files={"file": ("foto.png", b"no-es-imagen", "image/png")},
+            headers=user["headers"],
+        )
+        assert respuesta.status_code == 400
+
+    def test_elimina_avatar(self, client, user):
+        png = b"\x89PNG\r\n\x1a\n" + b"contenido"
+        client.put(
+            "/users/me/avatar",
+            files={"file": ("foto.png", png, "image/png")},
+            headers=user["headers"],
+        )
+        assert client.delete("/users/me/avatar", headers=user["headers"]).status_code == 204
+        assert client.get("/users/me", headers=user["headers"]).json()["hasAvatar"] is False
 
     def test_usuario_legacy_con_id_entero(self, client, db):
         # La migracion SQLite dejo usuarios con _id entero y sesiones con el
@@ -183,16 +236,30 @@ class TestMensajes:
         otro = registrar(client, "bruno@correo.com")
         hacerse_contactos(client, user, otro)
 
+        contenido = b"%PDF-1.4\ncontenido\n%%EOF"
         respuesta = client.post(
             f"/messages/{otro['id']}",
             data={"texto": ""},
-            files={"archivo": ("nota.pdf", b"contenido", "application/pdf")},
+            files={"archivo": ("nota.pdf", contenido, "application/pdf")},
             headers=user["headers"],
         )
         assert respuesta.status_code == 201
         cuerpo = respuesta.json()
         assert cuerpo["nombre_archivo"] == "nota.pdf"
-        assert cuerpo["tamano_archivo"] == len(b"contenido")
+        assert cuerpo["tamano_archivo"] == len(contenido)
+
+    def test_rechaza_archivo_con_contenido_falso(self, client, user, monkeypatch, tmp_path):
+        uploads = tmp_path / "uploads"
+        monkeypatch.setattr(messages_api, "UPLOADS_PATH", uploads)
+        otro = registrar(client, "bruno@correo.com")
+        hacerse_contactos(client, user, otro)
+
+        respuesta = client.post(
+            f"/messages/{otro['id']}",
+            files={"archivo": ("falso.pdf", b"x" * 50, "application/pdf")},
+            headers=user["headers"],
+        )
+        assert respuesta.status_code == 400
 
     def test_archivo_demasiado_grande(self, client, user, monkeypatch, tmp_path):
         uploads = tmp_path / "uploads"
@@ -200,7 +267,7 @@ class TestMensajes:
         otro = registrar(client, "bruno@correo.com")
         hacerse_contactos(client, user, otro)
 
-        grande = b"x" * (3 * 1024 * 1024 + 1)
+        grande = b"%PDF-1.4" + b"x" * (3 * 1024 * 1024)
         respuesta = client.post(
             f"/messages/{otro['id']}",
             files={"archivo": ("grande.pdf", grande, "application/pdf")},

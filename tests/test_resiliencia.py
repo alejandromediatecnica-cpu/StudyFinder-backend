@@ -22,7 +22,7 @@ def test_ruta_con_datos_devuelve_503_con_cors_si_mongo_cae(client, monkeypatch):
     monkeypatch.setattr(database.users_collection, "find_one", caida)
     respuesta = client.post(
         "/auth/login",
-        json={"email": "ana@correo.com", "password": "secreta1"},
+        json={"email": "ana@correo.com", "password": "ClaveSegura2026x"},
         headers={"Origin": "http://localhost:4200"},
     )
     assert respuesta.status_code == 503

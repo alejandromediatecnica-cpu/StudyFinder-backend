@@ -1,4 +1,6 @@
 import logging
+import re
+import unicodedata
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -54,6 +56,20 @@ users_collection = db["users"]
 sessions_collection = db["auth_sessions"]
 documents_collection = db["documents"]
 materia_documents_collection = db["materia_documents"]
+tasks_collection = db["tasks"]
+calendar_events_collection = db["calendar_events"]
+password_verifications_collection = db["password_verifications"]
+
+
+def normalize_name_key(name: str) -> str:
+    """Clave de unicidad para el nombre de usuario.
+
+    Se ignoran mayúsculas, acentos y espacios repetidos para que "José  Pérez"
+    y "jose perez" no puedan registrarse como cuentas distintas.
+    """
+    normalized = unicodedata.normalize("NFKD", (name or "").strip())
+    without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
+    return re.sub(r"\s+", " ", without_accents).casefold()
 
 
 def initialize_database() -> None:
@@ -63,10 +79,16 @@ def initialize_database() -> None:
     # en vez de tumbar todo el proceso al importar.
     try:
         users_collection.create_index("email", unique=True)
+        users_collection.create_index("name_key", unique=True, sparse=True)
+        sessions_collection.create_index("token", unique=True)
+        password_verifications_collection.create_index("token", unique=True)
         materia_documents_collection.create_index(
             [("user_id", ASCENDING), ("materia", ASCENDING), ("document_id", ASCENDING)],
             unique=True,
         )
+        documents_collection.create_index([("user_id", ASCENDING), ("created_at", ASCENDING)])
+        tasks_collection.create_index([("user_id", ASCENDING), ("due_date", ASCENDING)])
+        calendar_events_collection.create_index([("user_id", ASCENDING), ("date", ASCENDING)])
     except PyMongoError as error:
         logger.error(
             "No se pudo inicializar MongoDB (base %r): %s: %s. "
@@ -99,6 +121,13 @@ def user_id_for_token(token: str) -> str | None:
 
 def revoke_session(token: str) -> None:
     sessions_collection.delete_one({"token": token})
+
+
+def revoke_user_sessions(user_id: str, keep_token: str | None = None) -> None:
+    query: dict = {"user_id": user_id}
+    if keep_token:
+        query["token"] = {"$ne": keep_token}
+    sessions_collection.delete_many(query)
 
 
 def create_document(user_id: str, filename: str, storage_path: str, content_type: str, size: int) -> dict:
@@ -144,6 +173,17 @@ def total_storage_for_user(user_id: str) -> int:
     return total
 
 
+def storage_info_for_user(user_id: str, limit: int) -> dict:
+    used = total_storage_for_user(user_id)
+    return {
+        "used": used,
+        "limit": limit,
+        "available": max(limit - used, 0),
+        "documentCount": documents_collection.count_documents({"user_id": user_id}),
+        "percent": round(used * 100 / limit, 1) if limit else 0,
+    }
+
+
 def list_documents_from_others(exclude_user_id: str) -> list[dict]:
     documents = list(
         documents_collection.find({"user_id": {"$ne": exclude_user_id}}).sort("created_at", -1)
@@ -185,3 +225,40 @@ def delete_document(user_id: str, document_id: str) -> dict | None:
 
 contacts_collection = db["contacts"]
 messages_collection = db["messages"]
+
+
+def delete_user_data(user_id: str) -> tuple[dict | None, list[dict], list[str]]:
+    """Borra la cuenta y los datos que le pertenecen.
+
+    No elimina los mensajes que otros usuarios le enviaron porque son contenido
+    de esos usuarios; solo se borran los mensajes escritos por la cuenta y sus
+    archivos adjuntos.
+    """
+    user = users_collection.find_one({"_id": id_query(user_id)})
+    documents = list(documents_collection.find({"user_id": user_id}))
+    document_ids = [document["id"] for document in documents]
+    attachments = [
+        message["archivo"]
+        for message in messages_collection.find(
+            {"emisor_id": user_id, "archivo": {"$ne": None}}, {"archivo": 1}
+        )
+        if message.get("archivo")
+    ]
+
+    materia_documents_collection.delete_many(
+        {
+            "$or": [
+                {"user_id": user_id},
+                {"document_id": {"$in": document_ids}},
+            ]
+        }
+    )
+    documents_collection.delete_many({"user_id": user_id})
+    tasks_collection.delete_many({"user_id": user_id})
+    calendar_events_collection.delete_many({"user_id": user_id})
+    messages_collection.delete_many({"emisor_id": user_id})
+    contacts_collection.delete_many({"$or": [{"a_id": user_id}, {"b_id": user_id}]})
+    sessions_collection.delete_many({"user_id": user_id})
+    password_verifications_collection.delete_many({"user_id": user_id})
+    users_collection.delete_one({"_id": id_query(user_id)})
+    return user, documents, attachments

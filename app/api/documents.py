@@ -1,3 +1,5 @@
+import threading
+from collections import defaultdict
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,19 +12,30 @@ from app.database import (
     associate_document,
     create_document,
     delete_document,
-    get_document,
     get_document_by_id,
     list_documents,
     list_documents_from_others,
     remove_document_association,
+    storage_info_for_user,
     total_storage_for_user,
     user_id_for_token,
 )
+from app.files import document_content_is_valid
+from app.realtime import notify
 
 router = APIRouter(prefix="/documents", tags=["documents"])
-MAX_FILE_SIZE = 25 * 1024 * 1024
 MAX_STORAGE_PER_USER = 3 * 1024 * 1024
+# El tamano maximo por archivo nunca puede superar la cuota total del usuario.
+MAX_FILE_SIZE = MAX_STORAGE_PER_USER
 ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
+
+_locks_guard = threading.Lock()
+_user_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+
+
+def _user_lock(user_id: str) -> threading.Lock:
+    with _locks_guard:
+        return _user_locks[user_id]
 
 
 class MateriaAssociation(BaseModel):
@@ -60,35 +73,49 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Tipo de archivo no permitido.")
 
     content = await file.read(MAX_FILE_SIZE + 1)
+    await file.close()
     if not content:
         raise HTTPException(status_code=400, detail="El archivo está vacío.")
     if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="El tamaño máximo permitido es 25 MB.")
-    if total_storage_for_user(user_id) + len(content) > MAX_STORAGE_PER_USER:
+        raise HTTPException(status_code=413, detail="El tamaño máximo por archivo es 3 MB.")
+    if not document_content_is_valid(extension, content):
         raise HTTPException(
-            status_code=413,
-            detail="No te queda espacio: cada usuario dispone de 3 MB de almacenamiento.",
+            status_code=400,
+            detail="El contenido del archivo no coincide con su extensión.",
         )
 
     storage_name = f"{uuid4().hex}{extension}"
     relative_path = Path(user_id) / storage_name
     destination = UPLOADS_PATH / relative_path
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(content)
-    try:
-        document = create_document(
-            user_id=user_id,
-            filename=filename,
-            storage_path=relative_path.as_posix(),
-            content_type=file.content_type or "application/octet-stream",
-            size=len(content),
-        )
-    except Exception:
-        destination.unlink(missing_ok=True)
-        raise
-    finally:
-        await file.close()
+
+    with _user_lock(user_id):
+        if total_storage_for_user(user_id) + len(content) > MAX_STORAGE_PER_USER:
+            raise HTTPException(
+                status_code=413,
+                detail="No te queda espacio: cada usuario dispone de 3 MB de almacenamiento.",
+            )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+        try:
+            document = create_document(
+                user_id=user_id,
+                filename=filename,
+                storage_path=relative_path.as_posix(),
+                content_type=file.content_type or "application/octet-stream",
+                size=len(content),
+            )
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+
+    notify([user_id], "documents", "created", {"id": document["id"]})
     return public_document(document)
+
+
+@router.get("/storage")
+def get_storage(authorization: str | None = Header(default=None)):
+    user_id = authenticated_user_id(authorization)
+    return storage_info_for_user(user_id, MAX_STORAGE_PER_USER)
 
 
 @router.get("")
@@ -162,3 +189,4 @@ def remove_document(
     if not document:
         raise HTTPException(status_code=404, detail="No se encontró el documento.")
     (UPLOADS_PATH / document["storage_path"]).unlink(missing_ok=True)
+    notify([user_id], "documents", "deleted", {"id": document_id})

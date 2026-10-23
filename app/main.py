@@ -9,8 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pymongo.errors import ConnectionFailure
 from app.api.auth import router as auth_router
+from app.api.calendar import router as calendar_router
 from app.api.documents import router as documents_router
+from app.api.events_stream import router as events_router
 from app.api.search import router as search_router
+from app.api.tasks import router as tasks_router
 from app.api.users import router as users_router
 from app.api.contacts import router as contacts_router
 from app.api.messages import router as messages_router
@@ -54,6 +57,9 @@ app.include_router(users_router)
 app.include_router(contacts_router)
 app.include_router(messages_router)
 app.include_router(messages_files_router)
+app.include_router(tasks_router)
+app.include_router(calendar_router)
+app.include_router(events_router)
 
 
 @app.get("/")

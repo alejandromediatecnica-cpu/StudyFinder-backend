@@ -28,6 +28,33 @@ def test_email_unico_en_usuarios(db):
         db.users_collection.insert_one({**datos, "name": "Otra"})
 
 
+def test_normalize_name_key_ignora_mayusculas_acentos_y_espacios(db):
+    assert db.normalize_name_key("  José   Pérez ") == "jose perez"
+    assert db.normalize_name_key("JOSE PEREZ") == db.normalize_name_key("josé pérez")
+
+
+def test_nombre_unico_en_usuarios(db):
+    db.users_collection.insert_one(
+        {
+            "name": "Ana",
+            "name_key": db.normalize_name_key("Ana"),
+            "email": "ana@correo.com",
+            "password_hash": "h1",
+            "password_salt": "s1",
+        }
+    )
+    with pytest.raises(DuplicateKeyError):
+        db.users_collection.insert_one(
+            {
+                "name": "ana",
+                "name_key": db.normalize_name_key("ANA"),
+                "email": "otra@correo.com",
+                "password_hash": "h1",
+                "password_salt": "s1",
+            }
+        )
+
+
 def test_buscar_usuario_desconocido(db):
     assert db.users_collection.find_one({"email": "nadie@correo.com"}) is None
 
@@ -114,3 +141,41 @@ def test_eliminar_documento_inexistente_o_ajeno(db):
     documento = db.create_document("1", "a.pdf", "uploads/1/a.pdf", "application/pdf", 1)
     assert db.delete_document("2", documento["id"]) is None
     assert db.delete_document("1", "no-existe") is None
+
+
+def test_storage_info_for_user(db):
+    db.create_document("1", "a.pdf", "uploads/1/a.pdf", "application/pdf", 100)
+    db.create_document("1", "b.pdf", "uploads/1/b.pdf", "application/pdf", 50)
+    info = db.storage_info_for_user("1", 1000)
+    assert info["used"] == 150
+    assert info["available"] == 850
+    assert info["documentCount"] == 2
+    assert info["percent"] == 15.0
+
+
+def test_revocar_sesiones_de_usuario(db):
+    token_a = db.create_session("1")
+    token_b = db.create_session("1")
+    db.revoke_user_sessions("1", keep_token=token_a)
+    assert db.user_id_for_token(token_a) == "1"
+    assert db.user_id_for_token(token_b) is None
+
+
+def test_delete_user_data(db):
+    db.users_collection.insert_one({"_id": 1, "name": "Ana", "email": "ana@correo.com"})
+    documento = db.create_document("1", "a.pdf", "uploads/1/a.pdf", "application/pdf", 1)
+    db.associate_document("1", "Cálculo", documento["id"])
+    db.tasks_collection.insert_one({"id": "t1", "user_id": "1", "title": "Tarea"})
+    db.calendar_events_collection.insert_one({"id": "e1", "user_id": "1", "title": "Evento"})
+    db.create_session("1")
+
+    user, documentos, adjuntos = db.delete_user_data("1")
+    assert user["name"] == "Ana"
+    assert [d["id"] for d in documentos] == [documento["id"]]
+    assert adjuntos == []
+    assert db.users_collection.count_documents({}) == 0
+    assert db.documents_collection.count_documents({}) == 0
+    assert db.tasks_collection.count_documents({}) == 0
+    assert db.calendar_events_collection.count_documents({}) == 0
+    assert db.sessions_collection.count_documents({}) == 0
+    assert db.materia_documents_collection.count_documents({}) == 0
