@@ -1,3 +1,25 @@
+"""
+Eventos de calendario: CRUD.
+
+Un evento puede vincularse a una tarea mediante `task_id`. El vínculo lo crea el
+frontend: al guardar una tarea con fecha, crea/actualiza un evento con `taskId`.
+El backend solo persiste la referencia (no valida que la tarea exista).
+
+CAMPOS ESPECIALES
+  - `taskId` (alias de `task_id`): `populate_by_name=True` permite aceptar
+    `taskId` del JSON y también construir el modelo por nombre de campo.
+    OJO: `update_event` usa `model_dump(exclude_unset=True)` SIN `by_alias`, por
+    eso las claves salen en snake_case (`task_id`) y encajan con la BD.
+  - `date` es un string `YYYY-MM-DD` y `hour` un string `HH:MM` (no datetime):
+    así se evitan líos de zona horaria entre navegador y servidor.
+
+CÓMO AÑADIR UN CAMPO AL EVENTO
+  - Añádelo a `EventCreate`/`EventUpdate`, guárdalo en `create_event`, mapéalo
+    en `public_event` (y en `update_event` si necesita normalización).
+CÓMO ORDENAR DISTINTO
+  - `.sort("date", 1)` en `list_events` (hoy ascendente por fecha).
+"""
+
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -11,6 +33,9 @@ from app.realtime import notify
 router = APIRouter(prefix="/calendar", tags=["calendar"])
 
 
+# ---------------------------------------------------------------------------
+# ESQUEMAS
+# ---------------------------------------------------------------------------
 class EventCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -21,6 +46,7 @@ class EventCreate(BaseModel):
     subject: str | None = Field(default=None, max_length=120)
     description: str | None = Field(default=None, max_length=2000)
     documents: list[dict] | None = None
+    # `alias="taskId"`: el JSON puede enviar taskId; en Python es `task_id`.
     task_id: str | None = Field(default=None, max_length=64, alias="taskId")
 
 
@@ -37,7 +63,11 @@ class EventUpdate(BaseModel):
     task_id: str | None = Field(default=None, max_length=64, alias="taskId")
 
 
+# ---------------------------------------------------------------------------
+# SERIALIZACIÓN
+# ---------------------------------------------------------------------------
 def public_event(event: dict) -> dict:
+    """Documento de Mongo -> JSON camelCase (`taskId`, `createdAt`, `updatedAt`)."""
     return {
         "id": event["id"],
         "title": event["title"],
@@ -53,8 +83,15 @@ def public_event(event: dict) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# ENDPOINTS
+# ---------------------------------------------------------------------------
 @router.get("")
 def list_events(current_user: dict = Depends(get_current_user)):
+    """Lista los eventos del usuario ordenados por fecha ascendente.
+
+    El frontend agrupa por día para pintar el calendario mensual.
+    """
     user_id = str(current_user["_id"])
     events = calendar_events_collection.find({"user_id": user_id}).sort("date", 1)
     return [public_event(event) for event in events]
@@ -62,6 +99,13 @@ def list_events(current_user: dict = Depends(get_current_user)):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_event(payload: EventCreate, current_user: dict = Depends(get_current_user)):
+    """Crea un evento.
+
+    - `title` se recorta; vacío -> 422.
+    - `type` por defecto "evento" (el frontend usa tipos como "examen",
+      "entrega", "estudio" para el color).
+    EFECTOS: inserta en `calendar_events` y emite SSE `calendar.created`.
+    """
     user_id = str(current_user["_id"])
     title = payload.title.strip()
     if not title:
@@ -93,6 +137,14 @@ def update_event(
     payload: EventUpdate,
     current_user: dict = Depends(get_current_user),
 ):
+    """Actualiza parcialmente un evento propio.
+
+    - 404 si no existe o es de otro usuario.
+    - `title` recortado y no vacío.
+    - `changes` ya viene en snake_case (ver nota del módulo), así que se aplica
+      tal cual con `$set`. `updated_at` se refresca solo si hay cambios.
+    EFECTOS: escribe en `calendar_events` y emite `calendar.updated`.
+    """
     user_id = str(current_user["_id"])
     event = calendar_events_collection.find_one({"id": event_id, "user_id": user_id})
     if not event:
@@ -115,6 +167,13 @@ def update_event(
 
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_event(event_id: str, current_user: dict = Depends(get_current_user)):
+    """Borra un evento propio.
+
+    NO borra la tarea vinculada: si el evento tenía `taskId`, el frontend decide
+    si desvincularla (sigue existiendo en Tareas). Ver
+    `DELETE /tasks` para el caso masivo.
+    EFECTOS: borrado en `calendar_events`; SSE `calendar.deleted` con `{id}`.
+    """
     user_id = str(current_user["_id"])
     event = calendar_events_collection.find_one({"id": event_id, "user_id": user_id})
     if not event:
